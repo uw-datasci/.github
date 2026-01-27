@@ -1,0 +1,6 @@
+{
+  "name": "Next.js Quality Gate",
+  "description": "CI quality gate for Next.js apps deployed on Vercel. Runs linting, type checking, and build verification.",
+  "iconName": "nextjs",
+  "categories": ["continuous-integration"]
+}

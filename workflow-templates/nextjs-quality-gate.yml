@@ -1,0 +1,119 @@
+# =============================================================================
+# CI Quality Gate for Next.js + Vercel Projects
+# =============================================================================
+# Runs on PRs to ensure code quality before merge. Does NOT deploy - Vercel
+# handles deployment via its GitHub integration.
+#
+# Prerequisites:
+#   - pnpm as package manager with `pnpm-lock.yaml` committed
+#   - Scripts in package.json: `lint`, `typecheck`, `build`
+#   - Org secrets: INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET
+#
+# Reusable workflows (from uw-datasci/nexus-workflows):
+#   - quality-gate.yml: Runs ESLint + TypeScript checks
+#   - build-node.yml: Builds app with Infisical env injection
+# =============================================================================
+
+name: CI Quality Gate
+
+# TODO: Uncomment pull_request trigger when ready to enforce on PRs
+on:
+  # pull_request:
+  #   branches: [$default-branch]
+  #   paths-ignore:
+  #     - ".github/**"
+  workflow_dispatch: # Manual trigger only - use this to test before enabling PR checks
+
+concurrency:
+  # Cancels in-progress runs for same PR - saves CI minutes
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Global environment variables for all jobs - update as needed
+env:
+  NODE_VERSION: 22
+  PNPM_VERSION: 10.26.0
+  # Infisical config - see: https://infisical.com/docs
+  INFISICAL_PROJECT_SLUG: <insert-project-slug-here> # TODO: Set to your Infisical project slug
+  INFISICAL_SECRET_PATH: <insert-path-here> # TODO: Set to your project's secret path (e.g., /website)
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Setup: Install dependencies and cache for downstream jobs
+  # ---------------------------------------------------------------------------
+  setup:
+    name: Setup & Install Dependencies
+    runs-on: ubuntu-latest
+    outputs:
+      # Expose env vars to downstream jobs (env context not shared across jobs)
+      node-version: ${{ env.NODE_VERSION }}
+      pnpm-version: ${{ env.PNPM_VERSION }}
+      infisical-project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
+      infisical-secret-path: ${{ env.INFISICAL_SECRET_PATH }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm # Caches node_modules based on pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+  # ---------------------------------------------------------------------------
+  # Code Quality: Linting + Type Checking (runs in parallel after setup)
+  # ---------------------------------------------------------------------------
+  code-quality:
+    name: Code Quality
+    needs: setup
+    uses: uw-datasci/nexus-workflows/.github/workflows/quality-gate.yml@v4
+    with:
+      node-version: ${{ needs.setup.outputs.node-version }}
+      pnpm-version: ${{ needs.setup.outputs.pnpm-version }}
+      lint-command: pnpm lint
+      typecheck-command: pnpm typecheck
+
+  # ---------------------------------------------------------------------------
+  # Build: Verify production build succeeds (with env vars from Infisical)
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build
+    needs: [setup, code-quality]
+    uses: uw-datasci/nexus-workflows/.github/workflows/build-node.yml@v4
+    with:
+      node-version: ${{ needs.setup.outputs.node-version }}
+      pnpm-version: ${{ needs.setup.outputs.pnpm-version }}
+      build-command: pnpm build
+      infisical-project-slug: ${{ needs.setup.outputs.infisical-project-slug }}
+      infisical-secret-path: ${{ needs.setup.outputs.infisical-secret-path }}
+    secrets:
+      # These must be set at org or repo level in GitHub Settings > Secrets
+      INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+      INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+
+  # ---------------------------------------------------------------------------
+  # Summary: Posts results to PR (runs even if previous jobs fail)
+  # ---------------------------------------------------------------------------
+  quality-summary:
+    name: Quality Gate Summary
+    runs-on: ubuntu-latest
+    needs: [code-quality, build]
+    if: always() # Run even if code-quality or build fails
+    permissions:
+      pull-requests: write # Required to post PR comment
+      contents: read
+
+    steps:
+      - name: Post Quality Gate Summary
+        uses: uw-datasci/nexus-quality-summary@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          code-quality-result: ${{ needs.code-quality.result }}
+          build-result: ${{ needs.build.result == 'success' }}
