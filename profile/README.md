@@ -2,7 +2,7 @@
 
 **Inspiring the data science leaders of the future** by building an inclusive community to bridge the gap between academics and industry.
 
-We're a student-run club at the University of Waterloo hosting workshops, hackathons, projects, and social events for data science enthusiasts of all skill levels.
+We're a student-run club at the University of Waterloo hosting workshops, hackathons, projects, and social events.
 
 ## 🔗 Quick Links
 
